@@ -16,21 +16,17 @@
 
 package org.jivesoftware.openfire.group;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-
+import org.apache.commons.lang3.StringUtils;
 import org.jivesoftware.database.DbConnectionManager;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.util.JiveGlobals;
+import org.jivesoftware.util.PersistableMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmpp.packet.JID;
+
+import java.sql.*;
+import java.util.*;
 
 /**
  * The JDBC group provider allows you to use an external database to define the make up of groups.
@@ -63,6 +59,19 @@ import org.xmpp.packet.JID;
  * <li>{@code jdbcGroupProvider.useConnectionProvider = true}</li>
  * </ul>
  *
+ * You can also define properties to load <b>GroupProperties</b> from your external database (below are the default
+ * requests as examples). If you don't define them, then the default implementation of the methods will be used
+ * (see {@link AbstractGroupProvider}).
+ * <ul>
+ *     <li>{@code jdbcProvider.grouplistContainersSQL = SELECT groupName FROM ofGroupProp WHERE name='sharedRoster.groupList' AND propValue LIKE ?}</li>
+ *     <li>{@code jdbcProvider.publicGroupsSQL = SELECT groupName FROM ofGroupProp WHERE name='sharedRoster.showInRoster' AND propValue='everybody'}</li>
+ *     <li>{@code jdbcProvider.groupsForPropSQL = SELECT groupName FROM ofGroupProp WHERE name=? AND propValue=?}</li>
+ *     <li>{@code jdbcProvider.loadSharedGroupsSQL = SELECT groupName FROM ofGroupProp WHERE name='sharedRoster.showInRoster' AND propValue IS NOT NULL AND propValue <> 'nobody'}</li>
+ *     <li>{@code jdbcGroupProvider.loadPropertiesSQL = SELECT name, propValue FROM ofGroupProp WHERE groupName=?}</li>
+ * </ul>
+ * <u>Note:</u> If you want to use the possiblity to load GroupProperties from your external database, then check
+ * the class {@link JDBCGroupPropertyMap} which allow you to reflect Group properties change into the database.
+ *
  * @author David Snopek
  */
 public class JDBCGroupProvider extends AbstractGroupProvider {
@@ -77,6 +86,11 @@ public class JDBCGroupProvider extends AbstractGroupProvider {
     private String userGroupsSQL;
     private String loadMembersSQL;
     private String loadAdminsSQL;
+    private String grouplistContainersSQL;
+    private String publicGroupsSQL;
+    private String groupsForPropSQL;
+    private String loadSharedGroupsSQL;
+    private String loadPropertiesSQL;
     private boolean useConnectionProvider;
 
     private XMPPServer server = XMPPServer.getInstance();  
@@ -94,6 +108,11 @@ public class JDBCGroupProvider extends AbstractGroupProvider {
         JiveGlobals.migrateProperty("jdbcGroupProvider.descriptionSQL");
         JiveGlobals.migrateProperty("jdbcGroupProvider.loadMembersSQL");
         JiveGlobals.migrateProperty("jdbcGroupProvider.loadAdminsSQL");
+        JiveGlobals.migrateProperty("jdbcGroupProvider.grouplistContainersSQL");
+        JiveGlobals.migrateProperty("jdbcGroupProvider.publicGroupsSQL");
+        JiveGlobals.migrateProperty("jdbcGroupProvider.groupsForPropSQL");
+        JiveGlobals.migrateProperty("jdbcGroupProvider.loadSharedGroupsSQL");
+        JiveGlobals.migrateProperty("jdbcGroupProvider.loadPropertiesSQL");
 
         useConnectionProvider = JiveGlobals.getBooleanProperty("jdbcGroupProvider.useConnectionProvider");
 
@@ -117,6 +136,11 @@ public class JDBCGroupProvider extends AbstractGroupProvider {
         descriptionSQL = JiveGlobals.getProperty("jdbcGroupProvider.descriptionSQL");
         loadMembersSQL = JiveGlobals.getProperty("jdbcGroupProvider.loadMembersSQL");
         loadAdminsSQL = JiveGlobals.getProperty("jdbcGroupProvider.loadAdminsSQL");
+        grouplistContainersSQL = JiveGlobals.getProperty("jdbcGroupProvider.grouplistContainersSQL");
+        publicGroupsSQL = JiveGlobals.getProperty("jdbcGroupProvider.publicGroupsSQL");
+        groupsForPropSQL = JiveGlobals.getProperty("jdbcGroupProvider.groupsForPropSQL");
+        loadSharedGroupsSQL = JiveGlobals.getProperty("jdbcGroupProvider.loadSharedGroupsSQL");
+        loadPropertiesSQL = JiveGlobals.getProperty("jdbcGroupProvider.loadPropertiesSQL");
     }
 
     private Connection getConnection() throws SQLException {
@@ -292,4 +316,179 @@ public class JDBCGroupProvider extends AbstractGroupProvider {
         }
         return groupNames;
     }
+
+    @Override
+    public Collection<String> getVisibleGroupNames(String userGroup) {
+        // If no SQL was defined for this method we stick with the default implementation
+        if (StringUtils.isBlank(grouplistContainersSQL)) {
+            return super.getVisibleGroupNames(userGroup);
+        }
+
+        Set<String> groupNames = new HashSet<>();
+        Connection con = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(grouplistContainersSQL);
+            pstmt.setString(1, "%" + userGroup + "%");
+            rs = pstmt.executeQuery();
+            while (rs.next()) {
+                groupNames.add(rs.getString(1));
+            }
+        }
+        catch (SQLException sqle) {
+            Log.error(sqle.getMessage(), sqle);
+        }
+        finally {
+            DbConnectionManager.closeConnection(rs, pstmt, con);
+        }
+        return groupNames;
+    }
+
+    @Override
+    public Collection<String> getPublicSharedGroupNames() {
+        // If no SQL was defined for this method we stick with the default implementation
+        if (StringUtils.isBlank(publicGroupsSQL)) {
+            return super.getPublicSharedGroupNames();
+        }
+
+        Set<String> groupNames = new HashSet<>();
+        Connection con = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(publicGroupsSQL);
+            rs = pstmt.executeQuery();
+            while (rs.next()) {
+                groupNames.add(rs.getString(1));
+            }
+        }
+        catch (SQLException sqle) {
+            Log.error(sqle.getMessage(), sqle);
+        }
+        finally {
+            DbConnectionManager.closeConnection(rs, pstmt, con);
+        }
+        return groupNames;
+    }
+
+    @Override
+    public Collection<String> search(String key, String value) {
+        // If no SQL was defined for this method we stick with the default implementation
+        if (StringUtils.isBlank(groupsForPropSQL)) {
+            return super.search(key, value);
+        }
+
+        Set<String> groupNames = new HashSet<>();
+        Connection con = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(groupsForPropSQL);
+            pstmt.setString(1, key);
+            pstmt.setString(2, value);
+            rs = pstmt.executeQuery();
+            while (rs.next()) {
+                groupNames.add(rs.getString(1));
+            }
+        }
+        catch (SQLException sqle) {
+            Log.error(sqle.getMessage(), sqle);
+        }
+        finally {
+            DbConnectionManager.closeConnection(rs, pstmt, con);
+        }
+        return groupNames;
+    }
+
+
+    @Override
+    public Collection<String> getSharedGroupNames() {
+        // If no SQL was defined for this method we stick with the default implementation
+        if (StringUtils.isBlank(loadSharedGroupsSQL)) {
+            return super.getSharedGroupNames();
+        }
+
+        Collection<String> groupNames = new HashSet<>();
+        Connection con = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(loadSharedGroupsSQL);
+            rs = pstmt.executeQuery();
+            while (rs.next()) {
+                groupNames.add(rs.getString(1));
+            }
+        }
+        catch (SQLException sqle) {
+            Log.error(sqle.getMessage(), sqle);
+        }
+        finally {
+            DbConnectionManager.closeConnection(rs, pstmt, con);
+        }
+        return groupNames;
+    }
+
+    /**
+     * Returns a custom {@link Map} that updates the database whenever
+     * a property value is added, changed, or deleted.
+     *
+     * @param group The target group
+     * @return The properties for the given group
+     */
+    @Override
+    public PersistableMap<String,String> loadProperties(Group group) {
+        // If no SQL was defined for this method we stick with the default implementation
+        if (StringUtils.isBlank(loadPropertiesSQL)) {
+            return super.loadProperties(group);
+        }
+
+        // custom map implementation persists group property changes
+        // whenever one of the standard mutator methods are called
+        String name = group.getName();
+        PersistableMap<String,String> result;
+        if (useConnectionProvider) {
+            // We use the default connectionProvider
+            result = new JDBCGroupPropertyMap<>(group);
+        } else {
+            // We use the connectionProvider specifically configured for the JDBCGroupProvider
+            result = new JDBCGroupPropertyMap<>(group, connectionString);
+        }
+        Connection con = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(loadPropertiesSQL);
+            pstmt.setString(1, name);
+            rs = pstmt.executeQuery();
+            while (rs.next()) {
+                String key = rs.getString(1);
+                String value = rs.getString(2);
+                if (key != null) {
+                    if (value == null) {
+                        result.remove(key);
+                        Log.warn("Deleted null property " + key + " for group: " + name);
+                    } else {
+                        result.put(key, value, false); // skip persistence during load
+                    }
+                }
+                else { // should not happen, but ...
+                    Log.warn("Ignoring null property key for group: " + name);
+                }
+            }
+        }
+        catch (SQLException sqle) {
+            Log.error(sqle.getMessage(), sqle);
+        }
+        finally {
+            DbConnectionManager.closeConnection(rs, pstmt, con);
+        }
+        return result;
+    }
+
 }
