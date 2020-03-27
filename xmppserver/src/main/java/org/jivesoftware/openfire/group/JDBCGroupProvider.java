@@ -125,6 +125,16 @@ public class JDBCGroupProvider extends AbstractGroupProvider {
         return DriverManager.getConnection(connectionString);
     }
 
+    /**
+     * In this implementation, the group properties are expected to be writable to the backend unless the server property
+     * "jdbcGroupPropertyProvider.groupPropertyReadonly" has been explicitly set to 'true'.
+     * @return return false or true if "jdbcGroupPropertyProvider.groupPropertyReadonly" is true
+     */
+    @Override
+    public boolean arePropertiesReadOnly() {
+        return true;
+    }
+
     @Override
     public Group getGroup(String name) throws GroupNotFoundException {
         String description = null;
