@@ -36,6 +36,7 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.util.encoders.Hex;
 
 import org.jivesoftware.database.DbConnectionManager;
+import org.jivesoftware.database.ExternalDbConnectionManager;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.user.UserAlreadyExistsException;
 import org.jivesoftware.openfire.user.UserManager;
@@ -58,11 +59,12 @@ import org.slf4j.LoggerFactory;
  * <li>{@code provider.auth.className = org.jivesoftware.openfire.auth.JDBCAuthProvider}</li>
  * </ul>
  *
- * You'll also need to set your JDBC driver, connection string, and SQL statements:
+ * Then you need to set the <b>driver properties</b>. Check the documentation of the class {@link ExternalDbConnectionManager}
+ * to see what properties you <b>must</b> set. <br />
+ *
+ * And below are the SQL statements that should be defined (with examples):
  *
  * <ul>
- * <li>{@code jdbcProvider.driver = com.mysql.jdbc.Driver}</li>
- * <li>{@code jdbcProvider.connectionString = jdbc:mysql://localhost/dbname?user=username&amp;password=secret}</li>
  * <li>{@code jdbcAuthProvider.passwordSQL = SELECT password FROM user_account WHERE username=?}</li>
  * <li>{@code jdbcAuthProvider.passwordType = plain}</li>
  * <li>{@code jdbcAuthProvider.allowUpdate = true}</li>
@@ -110,7 +112,7 @@ public class JDBCAuthProvider implements AuthProvider, PropertyEventListener {
     private static final Logger Log = LoggerFactory.getLogger(JDBCAuthProvider.class);
     private static final int DEFAULT_BCRYPT_COST = 10; // Current (2015) value provided by Mindrot's BCrypt.GENSALT_DEFAULT_LOG2_ROUNDS value
 
-    private String connectionString;
+    private ExternalDbConnectionManager externalDb;
 
     private String passwordSQL;
     private String setPasswordSQL;
@@ -124,8 +126,6 @@ public class JDBCAuthProvider implements AuthProvider, PropertyEventListener {
      */
     public JDBCAuthProvider() {
         // Convert XML based provider setup to Database based
-        JiveGlobals.migrateProperty("jdbcProvider.driver");
-        JiveGlobals.migrateProperty("jdbcProvider.connectionString");
         JiveGlobals.migrateProperty("jdbcAuthProvider.passwordSQL");
         JiveGlobals.migrateProperty("jdbcAuthProvider.passwordType");
         JiveGlobals.migrateProperty("jdbcAuthProvider.setPasswordSQL");
@@ -137,16 +137,7 @@ public class JDBCAuthProvider implements AuthProvider, PropertyEventListener {
         useConnectionProvider = JiveGlobals.getBooleanProperty("jdbcAuthProvider.useConnectionProvider");
         
         if (!useConnectionProvider) {
-            // Load the JDBC driver and connection string.
-            String jdbcDriver = JiveGlobals.getProperty("jdbcProvider.driver");
-            try {
-               Class.forName(jdbcDriver).newInstance();
-            }
-            catch (Exception e) {
-                Log.error("Unable to load JDBC driver: " + jdbcDriver, e);
-                return;
-            }
-            connectionString = JiveGlobals.getProperty("jdbcProvider.connectionString");
+            externalDb = ExternalDbConnectionManager.getInstance();
         }
 
         // Load SQL statements.
@@ -314,9 +305,11 @@ public class JDBCAuthProvider implements AuthProvider, PropertyEventListener {
     }
 
     private Connection getConnection() throws SQLException {
-        if (useConnectionProvider)
+        if (useConnectionProvider) {
             return DbConnectionManager.getConnection();
-        return DriverManager.getConnection(connectionString);
+        } else {
+            return externalDb.getConnection();
+        }
     }
 
     /**
